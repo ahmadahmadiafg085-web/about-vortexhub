@@ -1,513 +1,639 @@
-<script>
+<script type="module">
 "use strict";
 
-(() => {
-    const VORTEX_HUB = Object.freeze({
+const VORTEX_HUB = (() => {
+    const VERSION = "1.0.0";
+
+    const STATE = Object.freeze({
+        IDLE: "IDLE",
+        DISCOVERING: "DISCOVERING",
+        RESOLVING: "RESOLVING",
+        VALIDATING: "VALIDATING",
+        EXECUTING: "EXECUTING",
+        VERIFYING: "VERIFYING",
+        COMMITTING: "COMMITTING",
+        COMPLETED: "COMPLETED",
+        FAILED: "FAILED"
+    });
+
+    const PRIORITY = Object.freeze({
+        RUNTIME: 100,
+        UI: 90,
+        REQUEST: 80,
+        RESPONSE: 70,
+        UPDATE: 60,
+        OPTIONAL: 10
+    });
+
+    const context = {
         identity: "VORTEX_HUB",
-        version: "1.0.0",
-        lifecycle: Object.freeze([
-            "CREATED",
-            "LOADING",
-            "RESOLVING",
-            "VALIDATING",
-            "EXECUTING",
-            "RENDERING",
-            "COMPLETED",
-            "FAILED"
-        ]),
-        state: {
-            phase: "CREATED",
-            requestId: 0,
-            active: false,
-            modules: new Map(),
-            procedures: new Map(),
-            results: new Map()
+        version: VERSION,
+        state: STATE.IDLE,
+        request: null,
+        response: null,
+        result: null,
+        errors: [],
+        modules: new Map(),
+        procedures: new Map(),
+        strategies: new Map(),
+        adapters: new Map(),
+        libraries: new Map(),
+        capabilities: new Map(),
+        sequence: 0
+    };
+
+    const Trait = {
+        implement(target, contract) {
+            for (const method of contract) {
+                if (typeof target[method] !== "function") {
+                    throw new TypeError(`TRAIT_CONTRACT_FAILURE:${method}`);
+                }
+            }
+            return target;
+        }
+    };
+
+    const Strategies = {
+        sequential: async (steps, ctx) => {
+            const results = [];
+            for (const step of steps) {
+                results.push(await step(ctx));
+            }
+            return results;
+        },
+
+        parallel: async (steps, ctx) =>
+            Promise.all(steps.map(step => step(ctx))),
+
+        fallback: async (steps, ctx) => {
+            let lastError;
+            for (const step of steps) {
+                try {
+                    return await step(ctx);
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+            throw lastError ?? new Error("NO_FALLBACK_STRATEGY");
+        },
+
+        priority: async (steps, ctx) => {
+            const ordered = [...steps].sort(
+                (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
+            );
+            const results = [];
+            for (const step of ordered) {
+                if (step.enabled === false) continue;
+                results.push(await step.execute(ctx));
+            }
+            return results;
+        }
+    };
+
+    const Runtime = {
+        async discover() {
+            context.state = STATE.DISCOVERING;
+
+            const capabilities = {
+                browser: typeof window !== "undefined",
+                document: typeof document !== "undefined",
+                fetch: typeof fetch === "function",
+                modules: typeof import === "function",
+                cache: typeof caches !== "undefined",
+                crypto: Boolean(globalThis.crypto?.subtle),
+                wasm: typeof WebAssembly !== "undefined",
+                serviceWorker: Boolean(navigator?.serviceWorker),
+                webAssemblyCompiler: typeof WebAssembly?.compile === "function"
+            };
+
+            for (const [name, available] of Object.entries(capabilities)) {
+                context.capabilities.set(name, available);
+            }
+
+            const libraries = {
+                ajv: globalThis.Ajv,
+                zod: globalThis.z,
+                yup: globalThis.yup,
+                lit: globalThis.Lit,
+                react: globalThis.React,
+                vue: globalThis.Vue,
+                alpine: globalThis.Alpine,
+                lodash: globalThis._
+            };
+
+            for (const [name, library] of Object.entries(libraries)) {
+                context.libraries.set(name, {
+                    available: Boolean(library),
+                    reference: library ?? null
+                });
+            }
+
+            context.adapters.set("browser", {
+                runtime: "Browser",
+                compiler: "JavaScript Engine",
+                toolchain: "Browser Native APIs"
+            });
+
+            return capabilities;
+        },
+
+        registerModule(id, module) {
+            if (!id || !module || typeof module !== "object") {
+                throw new TypeError("INVALID_MODULE_DEFINITION");
+            }
+
+            context.modules.set(id, Object.freeze({
+                id,
+                ...module
+            }));
+        },
+
+        registerProcedure(id, procedure) {
+            Trait.implement(procedure, ["execute"]);
+            context.procedures.set(id, procedure);
+        },
+
+        registerStrategy(id, strategy) {
+            if (typeof strategy !== "function") {
+                throw new TypeError("INVALID_STRATEGY");
+            }
+            context.strategies.set(id, strategy);
+        },
+
+        async loadModule(id, source) {
+            if (context.modules.has(id)) {
+                return context.modules.get(id);
+            }
+
+            if (typeof source !== "string" || !source.trim()) {
+                throw new TypeError("INVALID_MODULE_SOURCE");
+            }
+
+            const url = new URL(source, document.baseURI);
+
+            if (url.origin !== location.origin) {
+                throw new Error("UNTRUSTED_MODULE_ORIGIN");
+            }
+
+            const loaded = await import(url.href);
+
+            if (!loaded || typeof loaded !== "object") {
+                throw new Error("MODULE_LOAD_FAILED");
+            }
+
+            this.registerModule(id, loaded);
+            return loaded;
+        }
+    };
+
+    const Resolver = {
+        async resolve(request) {
+            context.state = STATE.RESOLVING;
+
+            const selected = [];
+
+            for (const [id, procedure] of context.procedures) {
+                if (
+                    typeof procedure.matches !== "function" ||
+                    procedure.matches(request, context)
+                ) {
+                    selected.push({ id, procedure });
+                }
+            }
+
+            selected.sort(
+                (a, b) =>
+                    (b.procedure.priority ?? 0) -
+                    (a.procedure.priority ?? 0)
+            );
+
+            if (!selected.length) {
+                throw new Error("NO_COMPATIBLE_PROCEDURE");
+            }
+
+            return selected;
+        },
+
+        async resolveDependencies(moduleDefinition) {
+            const dependencies = moduleDefinition.dependencies ?? [];
+            const resolved = [];
+
+            for (const dependency of dependencies) {
+                const module = context.modules.get(dependency);
+
+                if (!module) {
+                    throw new Error(`UNRESOLVED_DEPENDENCY:${dependency}`);
+                }
+
+                resolved.push(module);
+            }
+
+            return resolved;
+        }
+    };
+
+    const Validator = {
+        async validateRequest(request) {
+            context.state = STATE.VALIDATING;
+
+            if (!request || typeof request !== "object") {
+                throw new TypeError("INVALID_REQUEST");
+            }
+
+            if (typeof request.action !== "string" || !request.action) {
+                throw new TypeError("REQUEST_ACTION_REQUIRED");
+            }
+
+            if (
+                request.payload !== undefined &&
+                (typeof request.payload !== "object" ||
+                    request.payload === null)
+            ) {
+                throw new TypeError("INVALID_REQUEST_PAYLOAD");
+            }
+
+            return true;
+        },
+
+        async validateResponse(response) {
+            if (!response || typeof response !== "object") {
+                throw new TypeError("INVALID_RESPONSE");
+            }
+
+            if (response.ok !== true) {
+                throw new Error("RESPONSE_NOT_SUCCESSFUL");
+            }
+
+            return true;
+        }
+    };
+
+    const Executor = {
+        async execute(procedures, request) {
+            context.state = STATE.EXECUTING;
+
+            const outputs = [];
+
+            for (const entry of procedures) {
+                const output = await entry.procedure.execute({
+                    request,
+                    context,
+                    runtime: Runtime,
+                    resolver: Resolver,
+                    validator: Validator
+                });
+
+                if (output === undefined) {
+                    throw new Error(`EMPTY_PROCEDURE_RESULT:${entry.id}`);
+                }
+
+                outputs.push({
+                    procedure: entry.id,
+                    output
+                });
+            }
+
+            return outputs;
+        }
+    };
+
+    const Verifier = {
+        async verify(result) {
+            context.state = STATE.VERIFYING;
+
+            if (!Array.isArray(result) || result.length === 0) {
+                throw new Error("EMPTY_EXECUTION_RESULT");
+            }
+
+            for (const item of result) {
+                if (!item.procedure || item.output === undefined) {
+                    throw new Error("RESULT_INTEGRITY_FAILURE");
+                }
+            }
+
+            return true;
+        }
+    };
+
+    const Renderer = {
+        update(result) {
+            if (!document?.body) {
+                throw new Error("DOCUMENT_NOT_AVAILABLE");
+            }
+
+            const outputs = document.querySelectorAll(
+                "[data-vortex-output]"
+            );
+
+            const serialized = JSON.stringify(result, null, 2);
+
+            for (const element of outputs) {
+                element.textContent = serialized;
+            }
+
+            const status = document.querySelector(
+                "[data-vortex-status]"
+            );
+
+            if (status) {
+                status.textContent = STATE.COMPLETED;
+            }
+
+            document.dispatchEvent(
+                new CustomEvent("vortex:completed", {
+                    detail: {
+                        identity: context.identity,
+                        result
+                    }
+                })
+            );
+        },
+
+        fail(error) {
+            const status = document.querySelector(
+                "[data-vortex-status]"
+            );
+
+            if (status) {
+                status.textContent = STATE.FAILED;
+            }
+
+            document.dispatchEvent(
+                new CustomEvent("vortex:failed", {
+                    detail: {
+                        identity: context.identity,
+                        error: String(error)
+                    }
+                })
+            );
+        }
+    };
+
+    const Pipeline = {
+        async run(request) {
+            context.sequence++;
+            context.errors = [];
+            context.request = request;
+            context.response = null;
+            context.result = null;
+
+            try {
+                await Runtime.discover();
+                await Validator.validateRequest(request);
+
+                const procedures = await Resolver.resolve(request);
+                const result = await Executor.execute(
+                    procedures,
+                    request
+                );
+
+                await Verifier.verify(result);
+
+                context.state = STATE.COMMITTING;
+                context.result = result;
+                context.response = {
+                    ok: true,
+                    sequence: context.sequence,
+                    result
+                };
+
+                Renderer.update(result);
+                context.state = STATE.COMPLETED;
+
+                return context.response;
+            } catch (error) {
+                context.errors.push(error);
+                context.state = STATE.FAILED;
+                Renderer.fail(error);
+                throw error;
+            }
+        }
+    };
+
+    const Network = {
+        async request(url, options = {}) {
+            if (typeof fetch !== "function") {
+                throw new Error("FETCH_UNAVAILABLE");
+            }
+
+            const response = await fetch(url, {
+                method: options.method ?? "GET",
+                headers: {
+                    "Accept": "application/json",
+                    ...(options.headers ?? {})
+                },
+                body: options.body,
+                cache: "no-store",
+                credentials: "same-origin",
+                signal: options.signal
+            });
+
+            const contentType =
+                response.headers.get("content-type") ?? "";
+
+            if (!response.ok) {
+                throw new Error(
+                    `HTTP_REQUEST_FAILED:${response.status}`
+                );
+            }
+
+            let data;
+
+            if (contentType.includes("application/json")) {
+                data = await response.json();
+            } else {
+                data = await response.text();
+            }
+
+            const result = {
+                ok: true,
+                status: response.status,
+                url: response.url,
+                data
+            };
+
+            await Validator.validateResponse(result);
+            return result;
+        }
+    };
+
+    Runtime.registerStrategy("sequential", Strategies.sequential);
+    Runtime.registerStrategy("parallel", Strategies.parallel);
+    Runtime.registerStrategy("fallback", Strategies.fallback);
+    Runtime.registerStrategy("priority", Strategies.priority);
+
+    Runtime.registerProcedure("request", {
+        priority: PRIORITY.REQUEST,
+
+        matches(request) {
+            return request.action === "request";
+        },
+
+        async execute({ request }) {
+            return Network.request(
+                request.payload.url,
+                request.payload.options ?? {}
+            );
         }
     });
 
-    const SELECTORS = Object.freeze({
-        input: [
-            "#domainInput",
-            "[data-vortex-input]",
-            "input[name='domain']",
-            "input[type='url']"
-        ],
-        validate: [
-            "#validateButton",
-            "[data-vortex-action='validate']"
-        ],
-        registry: [
-            "#registryButton",
-            "[data-vortex-action='registry']"
-        ],
-        clear: [
-            "#clearButton",
-            "[data-vortex-action='clear']"
-        ],
-        output: [
-            "#result",
-            "#resolutionPreview",
-            "[data-vortex-output]",
-            "[data-vortex-role='output']"
-        ]
+    Runtime.registerProcedure("resolve", {
+        priority: PRIORITY.RUNTIME,
+
+        matches(request) {
+            return request.action === "resolve";
+        },
+
+        async execute({ request }) {
+            const source = request.payload.source;
+
+            if (!source) {
+                throw new Error("MODULE_SOURCE_REQUIRED");
+            }
+
+            return Runtime.loadModule(
+                request.payload.id,
+                source
+            );
+        }
     });
 
-    const transition = (next) => {
-        if (!VORTEX_HUB.lifecycle.includes(next)) {
-            throw new Error("INVALID_LIFECYCLE_STATE");
-        }
+    Runtime.registerProcedure("custom", {
+        priority: PRIORITY.OPTIONAL,
 
-        VORTEX_HUB.state.phase = next;
-        document.documentElement.dataset.vortexState = next;
-        document.dispatchEvent(new CustomEvent("vortex:state", {
+        matches(request) {
+            return request.action === "custom";
+        },
+
+        async execute({ request }) {
+            const handler = request.payload.handler;
+
+            if (typeof handler !== "function") {
+                throw new Error("CUSTOM_HANDLER_REQUIRED");
+            }
+
+            return handler(request.payload.input, context);
+        }
+    });
+
+    return Object.freeze({
+        identity: context.identity,
+        version: VERSION,
+        state: () => context.state,
+        context,
+        Runtime,
+        Resolver,
+        Validator,
+        Executor,
+        Verifier,
+        Renderer,
+        Network,
+        Pipeline,
+        Trait,
+        Strategies,
+
+        registerProcedure(id, procedure) {
+            Runtime.registerProcedure(id, procedure);
+        },
+
+        registerModule(id, module) {
+            Runtime.registerModule(id, module);
+        },
+
+        registerStrategy(id, strategy) {
+            Runtime.registerStrategy(id, strategy);
+        },
+
+        execute(request) {
+            return Pipeline.run(request);
+        }
+    });
+})();
+
+globalThis.VORTEX_HUB = VORTEX_HUB;
+
+const bootstrap = async () => {
+    await VORTEX_HUB.Runtime.discover();
+
+    document.dispatchEvent(
+        new CustomEvent("vortex:ready", {
             detail: {
                 identity: VORTEX_HUB.identity,
-                state: next
+                version: VORTEX_HUB.version,
+                capabilities: Object.fromEntries(
+                    VORTEX_HUB.context.capabilities
+                )
             }
-        }));
-    };
+        })
+    );
 
-    const find = (selectors) => {
-        for (const selector of selectors) {
-            const element = document.querySelector(selector);
-            if (element) return element;
-        }
-        return null;
-    };
+    document.addEventListener("click", async event => {
+        const button = event.target.closest(
+            "[data-vortex-action]"
+        );
 
-    const resolveInput = () => {
-        const element = find(SELECTORS.input);
-        if (!element) throw new Error("INPUT_REFERENCE_NOT_FOUND");
+        if (!button) return;
 
-        const original = String(element.value || "").trim();
-        if (!original) throw new Error("INPUT_REQUIRED");
+        const action = button.dataset.vortexAction;
+        const inputSelector = button.dataset.vortexInput;
+        const input = inputSelector
+            ? document.querySelector(inputSelector)
+            : null;
 
-        let url;
-
-        try {
-            url = new URL(
-                original.includes("://")
-                    ? original
-                    : `https://${original}`
-            );
-        } catch {
-            throw new Error("INVALID_DOMAIN_OR_URL");
-        }
-
-        if (!url.hostname || !url.hostname.includes(".")) {
-            throw new Error("INVALID_DOMAIN_IDENTITY");
-        }
-
-        return Object.freeze({
-            original,
-            domain: url.hostname.toLowerCase(),
-            protocol: url.protocol,
-            url: url.href
-        });
-    };
-
-    const request = async (url, options = {}) => {
-        const controller = new AbortController();
-        const timeout = setTimeout(
-            () => controller.abort(),
-            options.timeout ?? 15000
+        const output = document.querySelector(
+            "[data-vortex-output]"
         );
 
         try {
-            const response = await fetch(url, {
-                method: "GET",
-                mode: "cors",
-                cache: "no-store",
-                redirect: "follow",
-                signal: controller.signal,
-                headers: {
-                    "Accept": options.accept || "application/json"
+            button.disabled = true;
+
+            const response = await VORTEX_HUB.execute({
+                action,
+                payload: {
+                    value: input?.value ?? "",
+                    url: button.dataset.vortexUrl ?? "",
+                    source: button.dataset.vortexSource ?? "",
+                    id: button.dataset.vortexModule ?? "",
+                    options: {
+                        method: button.dataset.vortexMethod ?? "GET"
+                    }
                 }
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP_${response.status}`);
-            }
-
-            return {
-                status: response.status,
-                data: await response.json(),
-                url: response.url
-            };
-        } finally {
-            clearTimeout(timeout);
-        }
-    };
-
-    const strategies = Object.freeze({
-        identity: {
-            resolve: async (input) => input,
-            validate: (value) =>
-                Boolean(value.domain && value.protocol)
-        },
-
-        dns: {
-            records: ["A", "AAAA", "CNAME", "MX", "NS", "TXT"],
-
-            resolve: async (input) => {
-                const results = await Promise.allSettled(
-                    strategies.dns.records.map(async (type) => {
-                        const url = new URL(
-                            "https://cloudflare-dns.com/dns-query"
-                        );
-
-                        url.searchParams.set("name", input.domain);
-                        url.searchParams.set("type", type);
-
-                        const response = await request(url.href, {
-                            accept: "application/dns-json"
-                        });
-
-                        return {
-                            type,
-                            status: response.data.Status,
-                            records: (response.data.Answer || []).map(
-                                record => ({
-                                    name: record.name,
-                                    type: record.type,
-                                    ttl: record.TTL,
-                                    data: record.data
-                                })
-                            )
-                        };
-                    })
-                );
-
-                return results.map((result, index) => ({
-                    type: strategies.dns.records[index],
-                    status: result.status,
-                    data: result.status === "fulfilled"
-                        ? result.value
-                        : null,
-                    error: result.status === "rejected"
-                        ? String(result.reason)
-                        : null
-                }));
-            },
-
-            validate: (records) =>
-                Array.isArray(records) && records.length > 0
-        },
-
-        rdap: {
-            resolve: async (input) => {
-                const response = await request(
-                    `https://rdap.org/domain/${encodeURIComponent(input.domain)}`
-                );
-
-                return {
-                    domain: input.domain,
-                    handle: response.data.handle || null,
-                    name: response.data.ldhName || null,
-                    status: response.data.status || [],
-                    events: response.data.events || [],
-                    entities: response.data.entities || [],
-                    nameservers: response.data.nameservers || [],
-                    source: response.url
-                };
-            },
-
-            validate: (result) =>
-                Boolean(result && result.domain)
-        }
-    });
-
-    const registerProcedure = (id, definition) => {
-        if (!id || VORTEX_HUB.state.procedures.has(id)) {
-            throw new Error("DUPLICATE_OR_INVALID_PROCEDURE");
-        }
-
-        if (
-            typeof definition.resolve !== "function" ||
-            typeof definition.validate !== "function"
-        ) {
-            throw new Error("INVALID_PROCEDURE_CONTRACT");
-        }
-
-        VORTEX_HUB.state.procedures.set(id, Object.freeze(definition));
-    };
-
-    registerProcedure("identity", strategies.identity);
-    registerProcedure("dns", strategies.dns);
-    registerProcedure("rdap", strategies.rdap);
-
-    const resolveProcedure = async (id, input, context) => {
-        const procedure = VORTEX_HUB.state.procedures.get(id);
-
-        if (!procedure) {
-            throw new Error(`UNRESOLVED_PROCEDURE:${id}`);
-        }
-
-        const result = await procedure.resolve(input, context);
-
-        if (!procedure.validate(result, context)) {
-            throw new Error(`VALIDATION_FAILED:${id}`);
-        }
-
-        return result;
-    };
-
-    const ensureOutput = () => {
-        let output = find(SELECTORS.output);
-
-        if (!output) {
-            output = document.createElement("section");
-            output.id = "vortexRuntimeOutput";
-            output.dataset.vortexOutput = "true";
-            output.setAttribute("aria-live", "polite");
-
-            const host = document.querySelector("main") ||
-                         document.body;
-
-            host.appendChild(output);
-        }
-
-        return output;
-    };
-
-    const render = (requestId, results) => {
-        if (requestId !== VORTEX_HUB.state.requestId) return;
-
-        const output = ensureOutput();
-        const fragment = document.createDocumentFragment();
-
-        const heading = document.createElement("h2");
-        heading.textContent = "VORTEX_HUB RESOLUTION";
-        fragment.appendChild(heading);
-
-        for (const [id, result] of results) {
-            const section = document.createElement("section");
-            const title = document.createElement("h3");
-            const content = document.createElement("pre");
-
-            title.textContent = id.toUpperCase();
-            content.textContent = JSON.stringify(result, null, 2);
-
-            section.append(title, content);
-            fragment.appendChild(section);
-        }
-
-        output.replaceChildren(fragment);
-    };
-
-    const renderFailure = (requestId, error) => {
-        if (requestId !== VORTEX_HUB.state.requestId) return;
-
-        const output = ensureOutput();
-        const message = document.createElement("p");
-
-        message.setAttribute("role", "alert");
-        message.textContent = `RESOLUTION FAILED: ${error.message}`;
-
-        output.replaceChildren(message);
-    };
-
-    const execute = async (operation) => {
-        if (VORTEX_HUB.state.active) {
-            throw new Error("OPERATION_ALREADY_ACTIVE");
-        }
-
-        const requestId = ++VORTEX_HUB.state.requestId;
-        VORTEX_HUB.state.active = true;
-
-        try {
-            transition("RESOLVING");
-
-            const input = resolveInput();
-            const context = Object.freeze({
-                identity: VORTEX_HUB.identity,
-                requestId,
-                timestamp: new Date().toISOString()
-            });
-
-            const identity = await resolveProcedure(
-                "identity",
-                input,
-                context
-            );
-
-            const selected = operation === "validate"
-                ? ["dns"]
-                : operation === "registry"
-                    ? ["rdap"]
-                    : ["dns", "rdap"];
-
-            transition("EXECUTING");
-
-            const settled = await Promise.allSettled(
-                selected.map(async id => [
-                    id,
-                    await resolveProcedure(id, identity, context)
-                ])
-            );
-
-            const results = new Map([
-                ["identity", identity]
-            ]);
-
-            const failures = [];
-
-            for (let index = 0; index < settled.length; index++) {
-                const item = settled[index];
-
-                if (item.status === "fulfilled") {
-                    results.set(item.value[0], item.value[1]);
-                } else {
-                    failures.push({
-                        procedure: selected[index],
-                        error: String(item.reason)
-                    });
-                }
-            }
-
-            if (failures.length) {
-                throw new AggregateError(
-                    failures.map(item => new Error(
-                        `${item.procedure}:${item.error}`
-                    )),
-                    "ONE_OR_MORE_PROCEDURES_FAILED"
+            if (output) {
+                output.textContent = JSON.stringify(
+                    response,
+                    null,
+                    2
                 );
             }
-
-            if (requestId !== VORTEX_HUB.state.requestId) {
-                throw new Error("STALE_REQUEST");
-            }
-
-            transition("RENDERING");
-            render(requestId, results);
-
-            VORTEX_HUB.state.results = results;
-
-            transition("COMPLETED");
-
-            document.dispatchEvent(new CustomEvent("vortex:complete", {
-                detail: {
-                    requestId,
-                    identity,
-                    results: Object.fromEntries(results),
-                    status: "SUCCESS"
-                }
-            }));
-
-            return {
-                requestId,
-                status: "SUCCESS",
-                results
-            };
-
         } catch (error) {
-            transition("FAILED");
-            renderFailure(requestId, error);
-
-            document.dispatchEvent(new CustomEvent("vortex:failure", {
-                detail: {
-                    requestId,
-                    status: "FAILED",
+            if (output) {
+                output.textContent = JSON.stringify({
+                    ok: false,
                     error: String(error)
-                }
-            }));
-
-            throw error;
-
+                }, null, 2);
+            }
         } finally {
-            VORTEX_HUB.state.active = false;
+            button.disabled = false;
         }
-    };
-
-    const bind = () => {
-        const validate = find(SELECTORS.validate);
-        const registry = find(SELECTORS.registry);
-        const clear = find(SELECTORS.clear);
-
-        if (validate) {
-            validate.addEventListener("click", () => {
-                execute("validate").catch(() => {});
-            });
-        }
-
-        if (registry) {
-            registry.addEventListener("click", () => {
-                execute("registry").catch(() => {});
-            });
-        }
-
-        if (clear) {
-            clear.addEventListener("click", () => {
-                VORTEX_HUB.state.requestId++;
-                VORTEX_HUB.state.results.clear();
-
-                const output = find(SELECTORS.output);
-                if (output) output.replaceChildren();
-
-                const input = find(SELECTORS.input);
-                if (input) input.value = "";
-
-                transition("CREATED");
-            });
-        }
-    };
-
-    const bootstrap = async () => {
-        try {
-            transition("LOADING");
-
-            if (!document.documentElement || !document.body) {
-                throw new Error("HTML_DOCUMENT_NOT_READY");
-            }
-
-            bind();
-
-            VORTEX_HUB.state.modules.set("identity", true);
-            VORTEX_HUB.state.modules.set("dns", true);
-            VORTEX_HUB.state.modules.set("rdap", true);
-
-            transition("COMPLETED");
-
-            document.dispatchEvent(new CustomEvent("vortex:ready", {
-                detail: {
-                    identity: VORTEX_HUB.identity,
-                    version: VORTEX_HUB.version,
-                    modules: [...VORTEX_HUB.state.modules.keys()],
-                    procedures: [...VORTEX_HUB.state.procedures.keys()],
-                    status: "READY"
-                }
-            }));
-
-        } catch (error) {
-            transition("FAILED");
-            renderFailure(VORTEX_HUB.state.requestId, error);
-            throw error;
-        }
-    };
-
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", bootstrap, {
-            once: true
-        });
-    } else {
-        bootstrap();
-    }
-
-    Object.defineProperty(window, "VORTEX_HUB", {
-        value: Object.freeze({
-            identity: VORTEX_HUB.identity,
-            version: VORTEX_HUB.version,
-            execute,
-            registerProcedure,
-            get state() {
-                return VORTEX_HUB.state.phase;
-            },
-            get results() {
-                return Object.fromEntries(VORTEX_HUB.state.results);
-            }
-        }),
-        writable: false,
-        configurable: false
     });
-})();
+
+    document.dispatchEvent(
+        new CustomEvent("vortex:ui-ready", {
+            detail: {
+                identity: VORTEX_HUB.identity,
+                state: VORTEX_HUB.state()
+            }
+        })
+    );
+};
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootstrap, {
+        once: true
+    });
+} else {
+    await bootstrap();
+}
 </script>
