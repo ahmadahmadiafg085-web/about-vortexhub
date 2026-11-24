@@ -1,0 +1,781 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#10141d">
+<title>VORTEX_HUB REGISTRY</title>
+
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #10141d;
+  --panel: #181f2b;
+  --panel2: #202a39;
+  --border: #344153;
+  --text: #edf2f8;
+  --muted: #9aa9bb;
+  --accent: #62b5ff;
+  --green: #48d597;
+  --red: #ff7777;
+  --yellow: #f2c66d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+header {
+  padding: 25px 5%;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.brand span {
+  color: var(--accent);
+}
+
+.subtitle {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+main {
+  width: min(1050px, 92%);
+  margin: 45px auto;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 22px;
+}
+
+.description {
+  color: var(--muted);
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  margin-top: 22px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.input-row {
+  display: flex;
+  gap: 10px;
+}
+
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  outline: none;
+}
+
+input:focus {
+  border-color: var(--accent);
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 13px 19px;
+  background: var(--panel2);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: #1765a6;
+  border-color: #1765a6;
+}
+
+button:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.reference {
+  color: var(--accent);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.status {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: var(--panel2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.status.success {
+  color: var(--green);
+}
+
+.status.error {
+  color: var(--red);
+}
+
+.status.pending {
+  color: var(--yellow);
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.result {
+  padding: 15px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.result h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.result p {
+  margin: 7px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.result strong {
+  color: var(--text);
+}
+
+.result button {
+  margin-top: 10px;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.record-list {
+  margin: 0;
+  padding-left: 17px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+footer {
+  width: min(1050px, 92%);
+  margin: 40px auto 20px;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+@media (max-width: 650px) {
+  .input-row {
+    flex-direction: column;
+  }
+
+  .input-row button {
+    width: 100%;
+  }
+
+  .result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  main {
+    margin-top: 28px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="brand">VORTEX_HUB <span>REGISTRY</span></div>
+  <div class="subtitle">DOMAIN IDENTITY · DNS VALIDATION · REGISTRY REFERENCE</div>
+</header>
+
+<main>
+
+  <section>
+    <h2>Domain Resolution</h2>
+    <p class="description">
+      Enter a domain name or URL to retrieve its identity,
+      DNS records and public registration information.
+    </p>
+  </section>
+
+  <section class="panel">
+    <label class="field-label" for="domainInput">
+      DOMAIN / URL INPUT
+    </label>
+
+    <div class="input-row">
+      <input
+        id="domainInput"
+        type="text"
+        placeholder="https://vortexhub.studio"
+        autocomplete="url"
+        spellcheck="false"
+      >
+      <button id="validateButton" class="primary">
+        VALIDATE
+      </button>
+      <button id="registryButton">
+        REGISTRY
+      </button>
+    </div>
+
+    <div class="actions">
+      <button id="clearButton">CLEAR</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <h2>Resolution Preview</h2>
+      <span id="globalStatus" class="status pending">
+        WAITING
+      </span>
+    </div>
+
+    <div id="emptyState" class="empty">
+      No domain has been processed.<br>
+      Enter a domain and select an operation.
+    </div>
+
+    <div id="resultArea" hidden>
+      <div class="result-grid">
+
+        <article class="result">
+          <h3>DOMAIN IDENTITY</h3>
+          <p>Reference: <strong id="domainRef">—</strong></p>
+          <p>Original input: <strong id="originalInput">—</strong></p>
+          <p>Resolved domain: <strong id="resolvedDomain">—</strong></p>
+          <p>Protocol: <strong id="protocol">—</strong></p>
+          <button id="restoreInput">RESTORE INPUT</button>
+        </article>
+
+        <article class="result">
+          <h3>DNS VALIDATION</h3>
+          <p>Status: <strong id="dnsStatus">Not checked</strong></p>
+          <p>Reference: <strong id="dnsRef">—</strong></p>
+          <p>Checked records: <strong id="dnsCount">—</strong></p>
+          <p>Resolved addresses: <strong id="addressCount">—</strong></p>
+        </article>
+
+        <article class="result">
+          <h3>DNS RECORDS</h3>
+          <div id="dnsRecords">
+            <p>No DNS results.</p>
+          </div>
+        </article>
+
+        <article class="result">
+          <h3>DOMAIN REGISTRY</h3>
+          <p>Status: <strong id="registryStatus">Not checked</strong></p>
+          <p>Reference: <strong id="registryRef">—</strong></p>
+          <p>Registrar: <strong id="registrar">—</strong></p>
+          <p>Registration: <strong id="registrationDate">—</strong></p>
+          <p>Expiration: <strong id="expirationDate">—</strong></p>
+        </article>
+
+      </div>
+
+      <article class="result" style="margin-top:13px">
+        <h3>RESULT RELATIONSHIP</h3>
+        <p>Request reference: <strong id="requestRef">—</strong></p>
+        <p>Source: <strong id="sourceInfo">—</strong></p>
+        <p>Last operation: <strong id="lastOperation">—</strong></p>
+        <p>Result: <strong id="summary">—</strong></p>
+      </article>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  VORTEX_HUB REGISTRY · DOMAIN RESOLUTION INTERFACE<br>
+  Public DNS and RDAP information are retrieved from external services.
+  Registry lookup does not register, purchase or modify a domain.
+</footer>
+
+<script>
+"use strict";
+
+const DNS_ENDPOINT = "https://cloudflare-dns.com/dns-query";
+const RDAP_ENDPOINT = "https://rdap.org/domain/";
+
+const DNS_TYPES = [
+  "A",
+  "AAAA",
+  "CNAME",
+  "MX",
+  "NS",
+  "TXT"
+];
+
+const state = {
+  sequence: 0,
+  original: "",
+  domain: "",
+  protocol: "",
+  requestRef: "",
+  dns: null,
+  registry: null,
+  busy: false
+};
+
+const $ = (id) => document.getElementById(id);
+
+function normalizeDomain(value) {
+  const input = value.trim();
+
+  if (!input) {
+    throw new Error("Enter a domain or URL.");
+  }
+
+  let parsed;
+
+  try {
+    parsed = new URL(
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(input)
+        ? input
+        : "https://" + input
+    );
+  } catch {
+    throw new Error("The supplied URL is invalid.");
+  }
+
+  if (
+    parsed.protocol !== "http:" &&
+    parsed.protocol !== "https:"
+  ) {
+    throw new Error("Only HTTP and HTTPS URLs are supported.");
+  }
+
+  if (
+    parsed.username ||
+    parsed.password ||
+    !parsed.hostname ||
+    parsed.hostname.includes(":")
+  ) {
+    throw new Error("Enter a valid public domain name.");
+  }
+
+  const domain = parsed.hostname.toLowerCase().replace(/\.$/, "");
+
+  if (
+    domain.length > 253 ||
+    !domain.includes(".") ||
+    domain.split(".").some(label =>
+      !label ||
+      label.length > 63 ||
+      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+    )
+  ) {
+    throw new Error("Domain format validation failed.");
+  }
+
+  return {
+    original: input,
+    domain,
+    protocol: parsed.protocol.replace(":", "")
+  };
+}
+
+function setStatus(text, type = "pending") {
+  const element = $("globalStatus");
+  element.textContent = text;
+  element.className = "status " + type;
+}
+
+function showResults() {
+  $("emptyState").hidden = true;
+  $("resultArea").hidden = false;
+}
+
+function newRequest(input) {
+  const identity = normalizeDomain(input);
+
+  state.sequence += 1;
+  state.original = identity.original;
+  state.domain = identity.domain;
+  state.protocol = identity.protocol;
+  state.requestRef = "VHR-" + String(state.sequence).padStart(5, "0");
+  state.dns = null;
+  state.registry = null;
+
+  showResults();
+
+  $("domainRef").textContent = identity.domain;
+  $("originalInput").textContent = identity.original;
+  $("resolvedDomain").textContent = identity.domain;
+  $("protocol").textContent = identity.protocol.toUpperCase();
+
+  $("dnsStatus").textContent = "Not checked";
+  $("dnsRef").textContent = "—";
+  $("dnsCount").textContent = "—";
+  $("addressCount").textContent = "—";
+  $("dnsRecords").innerHTML = "<p>Waiting for DNS validation.</p>";
+
+  $("registryStatus").textContent = "Not checked";
+  $("registryRef").textContent = "—";
+  $("registrar").textContent = "—";
+  $("registrationDate").textContent = "—";
+  $("expirationDate").textContent = "—";
+
+  $("requestRef").textContent = state.requestRef;
+  $("sourceInfo").textContent = "Awaiting external response";
+  $("lastOperation").textContent = "Domain resolution";
+  $("summary").textContent = "Identity parsed; external checks pending.";
+
+  return state.requestRef;
+}
+
+async function queryDNS(domain, type) {
+  const url = new URL(DNS_ENDPOINT);
+  url.searchParams.set("name", domain);
+  url.searchParams.set("type", type);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/dns-json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error("DNS service returned HTTP " + response.status);
+  }
+
+  const data = await response.json();
+
+  if (!Array.isArray(data.Answer)) {
+    return [];
+  }
+
+  return data.Answer.map(record => ({
+    type,
+    value: record.data,
+    ttl: record.TTL
+  }));
+}
+
+async function validateDNS() {
+  if (state.busy) return;
+
+  let ref;
+
+  try {
+    ref = newRequest($("domainInput").value);
+  } catch (error) {
+    setStatus("INVALID INPUT", "error");
+    alert(error.message);
+    return;
+  }
+
+  state.busy = true;
+  $("validateButton").disabled = true;
+  setStatus("VALIDATING", "pending");
+
+  $("dnsStatus").textContent = "Querying DNS...";
+  $("dnsRef").textContent = ref + ":DNS";
+
+  try {
+    const results = await Promise.allSettled(
+      DNS_TYPES.map(type => queryDNS(state.domain, type))
+    );
+
+    if (state.requestRef !== ref) return;
+
+    const records = [];
+    const failures = [];
+
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        records.push(...result.value);
+      } else {
+        failures.push(DNS_TYPES[index]);
+      }
+    });
+
+    state.dns = {
+      reference: ref + ":DNS",
+      records,
+      failures
+    };
+
+    const addresses = records.filter(
+      record => record.type === "A" || record.type === "AAAA"
+    );
+
+    $("dnsStatus").textContent =
+      failures.length === DNS_TYPES.length
+        ? "Lookup failed"
+        : addresses.length
+          ? "Address records found"
+          : records.length
+            ? "Records found; no address record"
+            : "No records found";
+
+    $("dnsCount").textContent = records.length;
+    $("addressCount").textContent = addresses.length;
+
+    const container = $("dnsRecords");
+    container.replaceChildren();
+
+    if (!records.length) {
+      const message = document.createElement("p");
+      message.textContent = "No DNS answers returned.";
+      container.append(message);
+    }
+
+    records.forEach(record => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent =
+        record.type + ": " + record.value + " · TTL " + record.ttl;
+      container.append(paragraph);
+    });
+
+    if (failures.length) {
+      const warning = document.createElement("p");
+      warning.textContent = "Failed queries: " + failures.join(", ");
+      container.append(warning);
+    }
+
+    $("sourceInfo").textContent = "Cloudflare DNS over HTTPS";
+    $("lastOperation").textContent = "DNS validation";
+    $("summary").textContent =
+      records.length + " DNS answers returned; " +
+      addresses.length + " address records found.";
+
+    setStatus(
+      failures.length === DNS_TYPES.length
+        ? "DNS ERROR"
+        : records.length
+          ? "DNS RESPONSE RECEIVED"
+          : "NO DNS RECORDS",
+      failures.length === DNS_TYPES.length ? "error" : "success"
+    );
+
+  } catch (error) {
+    if (state.requestRef !== ref) return;
+
+    $("dnsStatus").textContent = "Request failed";
+    $("summary").textContent = error.message;
+    setStatus("REQUEST FAILED", "error");
+
+  } finally {
+    state.busy = false;
+    $("validateButton").disabled = false;
+  }
+}
+
+function findEvent(events, action) {
+  if (!Array.isArray(events)) return "Not provided";
+
+  const event = events.find(item => item.eventAction === action);
+
+  return event?.eventDate || "Not provided";
+}
+
+function findRegistrar(data) {
+  const entity = data.entities?.find(item =>
+    item.roles?.includes("registrar")
+  );
+
+  return entity?.vcardArray?.[1]?.find(item =>
+    item[0] === "fn"
+  )?.[3] || "Not provided";
+}
+
+async function lookupRegistry() {
+  if (state.busy) return;
+
+  let ref;
+
+  try {
+    ref = newRequest($("domainInput").value);
+  } catch (error) {
+    setStatus("INVALID INPUT", "error");
+    alert(error.message);
+    return;
+  }
+
+  state.busy = true;
+  $("registryButton").disabled = true;
+  setStatus("LOOKING UP", "pending");
+
+  $("registryStatus").textContent = "Querying RDAP...";
+  $("registryRef").textContent = ref + ":RDAP";
+
+  try {
+    const response = await fetch(
+      RDAP_ENDPOINT + encodeURIComponent(state.domain),
+      {
+        headers: {
+          Accept: "application/rdap+json, application/json"
+        }
+      }
+    );
+
+    if (state.requestRef !== ref) return;
+
+    if (response.status === 404) {
+      state.registry = {
+        reference: ref + ":RDAP",
+        status: "No registration record found"
+      };
+
+      $("registryStatus").textContent = state.registry.status;
+      $("registrar").textContent = "Not available";
+      $("registrationDate").textContent = "Not available";
+      $("expirationDate").textContent = "Not available";
+
+      $("sourceInfo").textContent = "RDAP public lookup";
+      $("lastOperation").textContent = "Registry lookup";
+      $("summary").textContent =
+        "No RDAP registration record was returned. Domain availability is not confirmed.";
+
+      setStatus("NO RDAP RECORD", "pending");
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error("RDAP returned HTTP " + response.status);
+    }
+
+    const data = await response.json();
+
+    state.registry = {
+      reference: ref + ":RDAP",
+      data
+    };
+
+    $("registryStatus").textContent =
+      (data.status || ["Registration record found"]).join(", ");
+
+    $("registrar").textContent = findRegistrar(data);
+
+    $("registrationDate").textContent =
+      findEvent(data.events, "registration");
+
+    $("expirationDate").textContent =
+      findEvent(data.events, "expiration");
+
+    $("sourceInfo").textContent = "RDAP public registry service";
+    $("lastOperation").textContent = "Registry lookup";
+    $("summary").textContent =
+      "Registration data retrieved from the public RDAP response.";
+
+    setStatus("REGISTRY FOUND", "success");
+
+  } catch (error) {
+    if (state.requestRef !== ref) return;
+
+    $("registryStatus").textContent = "Lookup failed";
+    $("summary").textContent = error.message;
+    setStatus("REGISTRY ERROR", "error");
+
+  } finally {
+    state.busy = false;
+    $("registryButton").disabled = false;
+  }
+}
+
+$("validateButton").addEventListener("click", validateDNS);
+$("registryButton").addEventListener("click", lookupRegistry);
+
+$("clearButton").addEventListener("click", () => {
+  $("domainInput").value = "";
+  $("resultArea").hidden = true;
+  $("emptyState").hidden = false;
+  state.dns = null;
+  state.registry = null;
+  setStatus("WAITING", "pending");
+});
+
+$("restoreInput").addEventListener("click", () => {
+  $("domainInput").value = state.original;
+  $("domainInput").focus();
+});
+
+$("domainInput").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    validateDNS();
+  }
+});
+</script>
+
+</body>
+</html>
