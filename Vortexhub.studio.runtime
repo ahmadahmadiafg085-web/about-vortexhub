@@ -1,0 +1,325 @@
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Procedure {
+    Identity,
+    Discover,
+    Resolve,
+    Validate,
+    Verify,
+    Execute,
+    Commit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strategy {
+    Sequential,
+    DependencyFirst,
+    ValidationFirst,
+    VerificationFirst,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    Pending,
+    Processing,
+    Resolved,
+    Validated,
+    Verified,
+    Executed,
+    Committed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionError {
+    InvalidTransition(Procedure),
+    MissingDependency(Procedure),
+    DuplicateProcedure(Procedure),
+    ProcedureFailed(Procedure),
+    IncompleteExecution,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    pub strategy: Strategy,
+    pub lifecycle: Lifecycle,
+    pub completed: Vec<Procedure>,
+    pub available: HashSet<Procedure>,
+}
+
+impl ExecutionContext {
+    pub fn new(strategy: Strategy) -> Self {
+        Self {
+            strategy,
+            lifecycle: Lifecycle::Pending,
+            completed: Vec::new(),
+            available: HashSet::new(),
+        }
+    }
+
+    pub fn is_completed(&self, procedure: Procedure) -> bool {
+        self.completed.contains(&procedure)
+    }
+
+    pub fn record(&mut self, procedure: Procedure) {
+        self.completed.push(procedure);
+        self.available.insert(procedure);
+    }
+}
+
+pub trait ProcedureProcessor {
+    fn process(
+        &self,
+        procedure: Procedure,
+        context: &mut ExecutionContext,
+    ) -> Result<(), ResolutionError>;
+}
+
+pub trait StrategyResolver {
+    fn resolve(
+        &self,
+        context: &mut ExecutionContext,
+    ) -> Result<Vec<Procedure>, ResolutionError>;
+}
+
+pub struct CanonicalResolver;
+
+impl StrategyResolver for CanonicalResolver {
+    fn resolve(
+        &self,
+        context: &mut ExecutionContext,
+    ) -> Result<Vec<Procedure>, ResolutionError> {
+        let sequence = match context.strategy {
+            Strategy::Sequential => vec![
+                Procedure::Identity,
+                Procedure::Discover,
+                Procedure::Resolve,
+                Procedure::Validate,
+                Procedure::Verify,
+                Procedure::Execute,
+                Procedure::Commit,
+            ],
+
+            Strategy::DependencyFirst => vec![
+                Procedure::Discover,
+                Procedure::Identity,
+                Procedure::Resolve,
+                Procedure::Validate,
+                Procedure::Verify,
+                Procedure::Execute,
+                Procedure::Commit,
+            ],
+
+            Strategy::ValidationFirst => vec![
+                Procedure::Identity,
+                Procedure::Discover,
+                Procedure::Validate,
+                Procedure::Resolve,
+                Procedure::Verify,
+                Procedure::Execute,
+                Procedure::Commit,
+            ],
+
+            Strategy::VerificationFirst => vec![
+                Procedure::Identity,
+                Procedure::Discover,
+                Procedure::Resolve,
+                Procedure::Verify,
+                Procedure::Validate,
+                Procedure::Execute,
+                Procedure::Commit,
+            ],
+        };
+
+        let mut unique = HashSet::new();
+
+        for procedure in &sequence {
+            if !unique.insert(*procedure) {
+                return Err(
+                    ResolutionError::DuplicateProcedure(*procedure)
+                );
+            }
+        }
+
+        Ok(sequence)
+    }
+}
+
+pub struct CanonicalProcessor;
+
+impl ProcedureProcessor for CanonicalProcessor {
+    fn process(
+        &self,
+        procedure: Procedure,
+        context: &mut ExecutionContext,
+    ) -> Result<(), ResolutionError> {
+        if context.is_completed(procedure) {
+            return Err(
+                ResolutionError::DuplicateProcedure(procedure)
+            );
+        }
+
+        let required: &[Procedure] = match procedure {
+            Procedure::Identity => &[],
+
+            Procedure::Discover => &[
+                Procedure::Identity,
+            ],
+
+            Procedure::Resolve => &[
+                Procedure::Discover,
+            ],
+
+            Procedure::Validate => &[
+                Procedure::Identity,
+                Procedure::Discover,
+            ],
+
+            Procedure::Verify => &[
+                Procedure::Resolve,
+                Procedure::Validate,
+            ],
+
+            Procedure::Execute => &[
+                Procedure::Verify,
+            ],
+
+            Procedure::Commit => &[
+                Procedure::Execute,
+            ],
+        };
+
+        for dependency in required {
+            if !context.is_completed(*dependency) {
+                return Err(
+                    ResolutionError::MissingDependency(*dependency)
+                );
+            }
+        }
+
+        context.lifecycle = Lifecycle::Processing;
+
+        match procedure {
+            Procedure::Identity => {
+                context.lifecycle = Lifecycle::Resolved;
+            }
+
+            Procedure::Discover => {
+                context.lifecycle = Lifecycle::Resolved;
+            }
+
+            Procedure::Resolve => {
+                context.lifecycle = Lifecycle::Resolved;
+            }
+
+            Procedure::Validate => {
+                context.lifecycle = Lifecycle::Validated;
+            }
+
+            Procedure::Verify => {
+                context.lifecycle = Lifecycle::Verified;
+            }
+
+            Procedure::Execute => {
+                context.lifecycle = Lifecycle::Executed;
+            }
+
+            Procedure::Commit => {
+                context.lifecycle = Lifecycle::Committed;
+            }
+        }
+
+        context.record(procedure);
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionReport {
+    pub strategy: Strategy,
+    pub lifecycle: Lifecycle,
+    pub completed: Vec<Procedure>,
+    pub success: bool,
+}
+
+pub struct VortexEngine<R, P> {
+    pub resolver: R,
+    pub processor: P,
+}
+
+impl<R, P> VortexEngine<R, P>
+where
+    R: StrategyResolver,
+    P: ProcedureProcessor,
+{
+    pub fn execute(
+        &self,
+        strategy: Strategy,
+    ) -> Result<ExecutionReport, ResolutionError> {
+        let mut context = ExecutionContext::new(strategy);
+
+        let procedures = self.resolver.resolve(&mut context)?;
+
+        for procedure in procedures {
+            if let Err(error) =
+                self.processor.process(procedure, &mut context)
+            {
+                context.lifecycle = Lifecycle::Failed;
+                return Err(error);
+            }
+        }
+
+        let required = [
+            Procedure::Identity,
+            Procedure::Discover,
+            Procedure::Resolve,
+            Procedure::Validate,
+            Procedure::Verify,
+            Procedure::Execute,
+            Procedure::Commit,
+        ];
+
+        if !required.iter().all(|p| context.is_completed(*p)) {
+            context.lifecycle = Lifecycle::Failed;
+            return Err(ResolutionError::IncompleteExecution);
+        }
+
+        if context.lifecycle != Lifecycle::Committed {
+            context.lifecycle = Lifecycle::Failed;
+            return Err(ResolutionError::IncompleteExecution);
+        }
+
+        Ok(ExecutionReport {
+            strategy,
+            lifecycle: context.lifecycle,
+            completed: context.completed,
+            success: true,
+        })
+    }
+}
+
+fn main() -> Result<(), ResolutionError> {
+    let engine = VortexEngine {
+        resolver: CanonicalResolver,
+        processor: CanonicalProcessor,
+    };
+
+    let strategies = [
+        Strategy::Sequential,
+        Strategy::DependencyFirst,
+        Strategy::ValidationFirst,
+        Strategy::VerificationFirst,
+    ];
+
+    for strategy in strategies {
+        let report = engine.execute(strategy)?;
+
+        assert!(report.success);
+        assert_eq!(report.lifecycle, Lifecycle::Committed);
+        assert_eq!(report.completed.len(), 7);
+    }
+
+    Ok(())
+}
