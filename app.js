@@ -1,34 +1,91 @@
-
 "use strict";
 
-/*
- * VORTEX_HUB REGISTRY
- * HTML Runtime Loader
+/* ============================================================
+ * VORTEX_HUB
+ * THREE-IMPLEMENTATION RUNTIME
  *
- * Source of truth: index.html
- * Runtime: app.js
- */
+ * 01. MANIFEST IMPLEMENTATION
+ * 02. RESOLVER IMPLEMENTATION
+ * 03. GATEWAY IMPLEMENTATION
+ *
+ * FLOW:
+ * UI -> GATEWAY -> MANIFEST -> RESOLVER
+ * RESOLVER -> VERIFIED ARTIFACT -> GATEWAY -> UI
+ * ============================================================ */
 
-const VORTEX = (() => {
+
+/* ============================================================
+ * 01. MANIFEST IMPLEMENTATION
+ * ============================================================ */
+
+const VORTEX_MANIFEST = (() => {
   const CONFIG = Object.freeze({
-    source: new URL("./index.html", location.href).href,
+    identity: "VORTEX_HUB",
+    version: "1.0.0",
+    runtime: "javascript",
+    target: "browser",
+    source: "./index.html",
     mount: "#vortex-runtime-mount",
     template: 'template[data-vortex-template="registry"]',
-    cacheName: "vortex-hub-html-registry-v1",
-    cacheKey: new URL("./index.html", location.href).href,
-    timeout: 15000
+    root: '[data-vortex-root="registry"]',
+    cache: "vortex-hub-html-registry-v1",
+    timeout: 15000,
+    actions: Object.freeze([
+      "validate",
+      "registry"
+    ])
   });
 
   const state = {
     status: "idle",
+    request: 0,
     version: null,
     hash: null,
     source: null,
-    lastVerified: null,
+    lastVerified: null
+  };
+
+  function snapshot() {
+    return Object.freeze({
+      identity: CONFIG.identity,
+      version: CONFIG.version,
+      runtime: CONFIG.runtime,
+      target: CONFIG.target,
+      source: CONFIG.source,
+      mount: CONFIG.mount,
+      template: CONFIG.template,
+      root: CONFIG.root,
+      cache: CONFIG.cache,
+      timeout: CONFIG.timeout,
+      actions: CONFIG.actions,
+      state: Object.freeze({ ...state })
+    });
+  }
+
+  function update(values) {
+    Object.assign(state, values);
+    return snapshot();
+  }
+
+  return Object.freeze({
+    CONFIG,
+    snapshot,
+    update
+  });
+})();
+
+
+/* ============================================================
+ * 02. RESOLVER IMPLEMENTATION
+ * ============================================================ */
+
+const VORTEX_RESOLVER = (() => {
+  const CONFIG = VORTEX_MANIFEST.CONFIG;
+
+  const state = {
     references: new Map(),
     components: new Map(),
-    values: new Map(),
-    request: 0
+    values: new Map()
   };
 
   const events = new EventTarget();
@@ -39,19 +96,9 @@ const VORTEX = (() => {
     );
   };
 
-  function resolveMount() {
-    const mount = document.querySelector(CONFIG.mount);
-
-    if (!mount) {
-      throw new Error("Runtime mount point not found.");
-    }
-
-    return mount;
-  }
-
   async function digest(content) {
     if (!crypto.subtle) {
-      throw new Error("SHA-256 verification is unavailable.");
+      throw new Error("SHA-256 verification unavailable.");
     }
 
     const bytes = new TextEncoder().encode(content);
@@ -65,38 +112,45 @@ const VORTEX = (() => {
   async function readCache() {
     if (!("caches" in window)) return null;
 
-    const cache = await caches.open(CONFIG.cacheName);
-    const response = await cache.match(CONFIG.cacheKey);
+    const cache = await caches.open(CONFIG.cache);
+    const response = await cache.match(
+      new URL(CONFIG.source, location.href).href
+    );
 
     if (!response) return null;
 
     const html = await response.text();
+    const hash = await digest(html);
 
     return {
       html,
-      hash: await digest(html),
+      hash,
       source: "cache"
     };
   }
 
-  async function writeCache(html, hash) {
+  async function writeCache(source) {
     if (!("caches" in window)) return false;
 
-    const cache = await caches.open(CONFIG.cacheName);
+    const cache = await caches.open(CONFIG.cache);
 
-    const response = new Response(html, {
+    const response = new Response(source.html, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
-        "X-Vortex-Hash": hash,
-        "X-Vortex-Source": "verified-index"
+        "X-Vortex-Hash": source.hash,
+        "X-Vortex-Source": "verified-manifest"
       }
     });
 
-    await cache.put(CONFIG.cacheKey, response);
+    await cache.put(
+      new URL(CONFIG.source, location.href).href,
+      response
+    );
+
     return true;
   }
 
-  async function fetchLatest() {
+  async function fetchSource() {
     const controller = new AbortController();
 
     const timeout = setTimeout(
@@ -105,32 +159,37 @@ const VORTEX = (() => {
     );
 
     try {
-      const response = await fetch(CONFIG.source, {
-        method: "GET",
-        cache: "no-store",
-        credentials: "same-origin",
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          "Accept": "text/html"
+      const response = await fetch(
+        new URL(CONFIG.source, location.href).href,
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          redirect: "error",
+          signal: controller.signal,
+          headers: {
+            "Accept": "text/html"
+          }
         }
-      });
+      );
 
       if (!response.ok) {
-        throw new Error("HTML source returned HTTP " + response.status);
+        throw new Error(
+          "Source HTTP " + response.status
+        );
       }
 
       const contentType =
         response.headers.get("content-type") || "";
 
       if (!contentType.includes("text/html")) {
-        throw new Error("Source is not an HTML document.");
+        throw new Error("Invalid HTML content type.");
       }
 
       const html = await response.text();
 
       if (!html.trim()) {
-        throw new Error("HTML source is empty.");
+        throw new Error("Empty HTML source.");
       }
 
       return {
@@ -144,9 +203,9 @@ const VORTEX = (() => {
     }
   }
 
-  function parseSource(html) {
+  function parse(source) {
     const documentSource = new DOMParser().parseFromString(
-      html,
+      source.html,
       "text/html"
     );
 
@@ -155,15 +214,15 @@ const VORTEX = (() => {
     );
 
     if (!template) {
-      throw new Error("Registry HTML template not found.");
+      throw new Error("Manifest template not found.");
     }
 
     const root = template.content.querySelector(
-      '[data-vortex-root="registry"]'
+      CONFIG.root
     );
 
     if (!root) {
-      throw new Error("Registry root reference not found.");
+      throw new Error("Manifest root not found.");
     }
 
     return {
@@ -173,7 +232,7 @@ const VORTEX = (() => {
     };
   }
 
-  function verifySource(parsed) {
+  function verify(parsed) {
     const root = parsed.root;
 
     const inputs = [
@@ -195,7 +254,7 @@ const VORTEX = (() => {
       const reference = element.dataset.vortexRef;
 
       if (!reference) {
-        throw new Error("An element has an empty reference.");
+        throw new Error("Empty element reference.");
       }
 
       const role = element.dataset.vortexRole;
@@ -218,49 +277,42 @@ const VORTEX = (() => {
       const identity = component.dataset.vortexComponent;
 
       if (!identity || componentMap.has(identity)) {
-        throw new Error("Invalid or duplicate component identity.");
+        throw new Error("Invalid component identity.");
       }
 
       componentMap.set(identity, component);
     }
 
     if (!inputs.length && !outputs.length) {
-      throw new Error("No input or output references found.");
+      throw new Error("No input/output references.");
     }
 
-    return {
-      references,
-      components
-    };
-  }
+    const allowed = new Set(CONFIG.actions);
 
-  function verifyActions(root) {
-    const allowed = new Set([
-      "validate",
-      "registry"
-    ]);
-
-    for (const button of root.querySelectorAll(
+    for (const element of root.querySelectorAll(
       "[data-vortex-action]"
     )) {
-      const action = button.dataset.vortexAction;
+      const action = element.dataset.vortexAction;
 
       if (!allowed.has(action)) {
         throw new Error("Unsupported action: " + action);
       }
     }
+
+    return {
+      references,
+      components: componentMap,
+      inputs,
+      outputs
+    };
   }
 
   function synchronizeStyles(sourceDocument) {
-    const existing = document.querySelector(
-      '[data-vortex-runtime-style]'
-    );
+    document.querySelectorAll(
+      "[data-vortex-runtime-style]"
+    ).forEach(style => style.remove());
 
-    if (existing) existing.remove();
-
-    const styles = sourceDocument.querySelectorAll("style");
-
-    for (const original of styles) {
+    for (const original of sourceDocument.querySelectorAll("style")) {
       const style = document.createElement("style");
 
       style.dataset.vortexRuntimeStyle = "true";
@@ -285,7 +337,10 @@ const VORTEX = (() => {
     for (const input of inputs) {
       const reference = input.dataset.vortexRef;
 
-      state.references.set("input:" + reference, input);
+      state.references.set(
+        "input:" + reference,
+        input
+      );
 
       state.values.set(
         reference,
@@ -293,20 +348,21 @@ const VORTEX = (() => {
       );
 
       input.addEventListener("input", () => {
-        state.values.set(reference, input.value);
+        const value = input.value;
 
-        updateOutputs(reference, input.value);
+        state.values.set(reference, value);
+
+        updateOutputs(reference, value);
 
         emit("vortex:input", {
           reference,
-          value: input.value
+          value
         });
       });
     }
 
     for (const output of outputs) {
       const reference = output.dataset.vortexRef;
-
       const key = "output:" + reference;
 
       if (!state.references.has(key)) {
@@ -331,7 +387,7 @@ const VORTEX = (() => {
     }
   }
 
-  function bindActions(root) {
+  function bindActions(root, metadata) {
     root.addEventListener("click", event => {
       const button = event.target.closest(
         "[data-vortex-action]"
@@ -339,19 +395,21 @@ const VORTEX = (() => {
 
       if (!button || !root.contains(button)) return;
 
-      const action = button.dataset.vortexAction;
-
       emit("vortex:action", {
-        action,
+        action: button.dataset.vortexAction,
         values: Object.fromEntries(state.values),
-        version: state.version,
-        hash: state.hash
+        version: metadata.version,
+        hash: metadata.hash
       });
     });
   }
 
-  function render(parsed, verified) {
-    const mount = resolveMount();
+  function render(parsed, verified, metadata) {
+    const mount = document.querySelector(CONFIG.mount);
+
+    if (!mount) {
+      throw new Error("Runtime mount not found.");
+    }
 
     const fragment = document.importNode(
       parsed.root,
@@ -361,84 +419,104 @@ const VORTEX = (() => {
     mount.replaceChildren(fragment);
 
     state.references = verified.references;
+
     state.components = new Map(
-      verified.components.map(component => [
-        component.dataset.vortexComponent,
+      [...verified.components].map(([identity, component]) => [
+        identity,
         component
       ])
     );
 
     bindReferences(mount);
-    bindActions(mount);
+    bindActions(mount, metadata);
 
     emit("vortex:rendered", {
-      version: state.version,
-      hash: state.hash,
+      version: metadata.version,
+      hash: metadata.hash,
       components: [...state.components.keys()]
     });
   }
 
-  async function processSource(source) {
-    const parsed = parseSource(source.html);
+  async function resolve(source) {
+    const parsed = parse(source);
+    const verified = verify(parsed);
 
-    const verified = verifySource(parsed);
+    const manifest = VORTEX_MANIFEST.snapshot();
 
-    verifyActions(parsed.root);
+    const metadata = {
+      version:
+        parsed.template.dataset.version ||
+        manifest.version,
+      hash: source.hash,
+      source: source.source
+    };
 
-    const previousHash = state.hash;
+    const previousHash = manifest.state.hash;
 
     synchronizeStyles(parsed.document);
 
-    state.hash = source.hash;
-    state.version =
-      parsed.template.dataset.version || "unversioned";
+    render(parsed, verified, metadata);
 
-    state.source = source.source;
-    state.lastVerified = new Date().toISOString();
+    VORTEX_MANIFEST.update({
+      status: "verified",
+      version: metadata.version,
+      hash: metadata.hash,
+      source: metadata.source,
+      lastVerified: new Date().toISOString()
+    });
 
-    render(parsed, verified);
-
-    state.status =
+    const status =
       previousHash === source.hash
         ? "unchanged"
         : "updated";
 
     emit("vortex:verified", {
-      status: state.status,
-      version: state.version,
-      hash: state.hash,
-      source: state.source
+      status,
+      ...metadata
     });
 
-    return state.status;
+    return status;
   }
 
-  async function load() {
-    const requestId = ++state.request;
+  async function execute() {
+    const requestId =
+      VORTEX_MANIFEST.snapshot().state.request + 1;
 
-    state.status = "loading";
+    VORTEX_MANIFEST.update({
+      request: requestId,
+      status: "loading"
+    });
+
     emit("vortex:loading");
 
     let networkError = null;
 
     try {
-      const latest = await fetchLatest();
+      const source = await fetchSource();
 
-      if (requestId !== state.request) return;
+      if (
+        requestId !==
+        VORTEX_MANIFEST.snapshot().state.request
+      ) {
+        return;
+      }
 
-      const result = await processSource(latest);
+      const result = await resolve(source);
 
-      await writeCache(latest.html, latest.hash);
+      await writeCache(source);
 
-      if (requestId !== state.request) return;
+      if (
+        requestId !==
+        VORTEX_MANIFEST.snapshot().state.request
+      ) {
+        return;
+      }
 
-      emit("vortex:ready", {
+      return {
         result,
         source: "network",
-        version: state.version
-      });
-
-      return result;
+        version: VORTEX_MANIFEST.snapshot().state.version
+      };
 
     } catch (error) {
       networkError = error;
@@ -449,83 +527,206 @@ const VORTEX = (() => {
 
       if (!cached) throw networkError;
 
-      if (requestId !== state.request) return;
+      if (
+        requestId !==
+        VORTEX_MANIFEST.snapshot().state.request
+      ) {
+        return;
+      }
 
-      const result = await processSource(cached);
+      const result = await resolve(cached);
 
-      state.status = "offline-cache";
-
-      emit("vortex:ready", {
-        result,
-        source: "cache",
-        version: state.version,
-        warning: networkError?.message
+      VORTEX_MANIFEST.update({
+        status: "offline-cache"
       });
 
-      return result;
+      return {
+        result,
+        source: "cache",
+        version: VORTEX_MANIFEST.snapshot().state.version,
+        warning: networkError?.message
+      };
 
-    } catch (cacheError) {
-      state.status = "failed";
+    } catch (error) {
+      VORTEX_MANIFEST.update({
+        status: "failed"
+      });
 
       emit("vortex:error", {
         network: networkError?.message,
-        cache: cacheError?.message
+        cache: error?.message
       });
 
-      throw cacheError;
+      throw error;
     }
   }
 
   function getState() {
     return {
-      status: state.status,
-      version: state.version,
-      hash: state.hash,
-      source: state.source,
-      lastVerified: state.lastVerified,
+      ...VORTEX_MANIFEST.snapshot().state,
       values: Object.fromEntries(state.values)
     };
   }
 
   return Object.freeze({
-    load,
+    execute,
     getState,
     events,
     updateOutputs
   });
 })();
 
-/* Runtime lifecycle */
 
-VORTEX.events.addEventListener("vortex:ready", event => {
-  console.info("VORTEX_HUB READY", event.detail);
-});
+/* ============================================================
+ * 03. GATEWAY IMPLEMENTATION
+ * ============================================================ */
 
-VORTEX.events.addEventListener("vortex:error", event => {
-  console.error("VORTEX_HUB LOAD FAILED", event.detail);
-});
+const VORTEX_GATEWAY = (() => {
+  const events = new EventTarget();
 
-VORTEX.events.addEventListener("vortex:action", event => {
-  const { action, values } = event.detail;
+  const emit = (name, detail = {}) => {
+    events.dispatchEvent(
+      new CustomEvent(name, { detail })
+    );
+  };
 
-  /*
-   * Connect validated domain operations here.
-   * This loader does not register domains or modify DNS.
-   */
+  async function request(intent = "registry") {
+    if (!VORTEX_MANIFEST.CONFIG.actions.includes(intent)) {
+      throw new Error("Unsupported gateway intent: " + intent);
+    }
 
-  if (action === "validate") {
-    console.info("VALIDATE REQUEST", values);
+    emit("vortex:request", {
+      intent,
+      manifest: VORTEX_MANIFEST.snapshot()
+    });
+
+    const result = await VORTEX_RESOLVER.execute();
+
+    const response = Object.freeze({
+      identity: VORTEX_MANIFEST.CONFIG.identity,
+      intent,
+      result,
+      state: VORTEX_RESOLVER.getState()
+    });
+
+    emit("vortex:response", response);
+
+    return response;
   }
 
-  if (action === "registry") {
-    console.info("REGISTRY REQUEST", values);
+  function getState() {
+    return VORTEX_RESOLVER.getState();
   }
+
+  return Object.freeze({
+    request,
+    getState,
+    events
+  });
+})();
+
+
+/* ============================================================
+ * RUNTIME EVENT CONTRACT
+ * ============================================================ */
+
+VORTEX_RESOLVER.events.addEventListener(
+  "vortex:loading",
+  event => {
+    VORTEX_GATEWAY.events.dispatchEvent(
+      new CustomEvent("vortex:loading", {
+        detail: event.detail
+      })
+    );
+  }
+);
+
+VORTEX_RESOLVER.events.addEventListener(
+  "vortex:rendered",
+  event => {
+    VORTEX_GATEWAY.events.dispatchEvent(
+      new CustomEvent("vortex:rendered", {
+        detail: event.detail
+      })
+    );
+  }
+);
+
+VORTEX_RESOLVER.events.addEventListener(
+  "vortex:verified",
+  event => {
+    VORTEX_GATEWAY.events.dispatchEvent(
+      new CustomEvent("vortex:verified", {
+        detail: event.detail
+      })
+    );
+  }
+);
+
+VORTEX_RESOLVER.events.addEventListener(
+  "vortex:input",
+  event => {
+    VORTEX_GATEWAY.events.dispatchEvent(
+      new CustomEvent("vortex:input", {
+        detail: event.detail
+      })
+    );
+  }
+);
+
+VORTEX_RESOLVER.events.addEventListener(
+  "vortex:action",
+  event => {
+    const { action, values } = event.detail;
+
+    if (action === "validate") {
+      console.info("VALIDATE REQUEST", values);
+    }
+
+    if (action === "registry") {
+      console.info("REGISTRY REQUEST", values);
+    }
+
+    VORTEX_GATEWAY.events.dispatchEvent(
+      new CustomEvent("vortex:action", {
+        detail: event.detail
+      })
+    );
+  }
+);
+
+VORTEX_RESOLVER.events.addEventListener(
+  "vortex:error",
+  event => {
+    VORTEX_GATEWAY.events.dispatchEvent(
+      new CustomEvent("vortex:error", {
+        detail: event.detail
+      })
+    );
+  }
+);
+
+
+/* ============================================================
+ * PUBLIC BINARY / UI GATEWAY
+ * ============================================================ */
+
+window.VORTEX_HUB = Object.freeze({
+  manifest: VORTEX_MANIFEST,
+  resolver: VORTEX_RESOLVER,
+  gateway: VORTEX_GATEWAY,
+
+  request: VORTEX_GATEWAY.request,
+  getState: VORTEX_GATEWAY.getState,
+
+  events: VORTEX_GATEWAY.events
 });
 
-VORTEX.load().catch(error => {
+
+/* ============================================================
+ * RUNTIME ENTRY
+ * ============================================================ */
+
+VORTEX_GATEWAY.request("registry").catch(error => {
   console.error("VORTEX_HUB RUNTIME ERROR", error);
 });
-
-/* Public runtime reference */
-
-window.VORTEX_HUB = VORTEX;
